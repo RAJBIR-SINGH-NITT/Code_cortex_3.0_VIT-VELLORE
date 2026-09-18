@@ -1,700 +1,995 @@
-# Code_cortex_3.0_VIT-VELLORE
-Here we are building a complete ml working protype along with full deploying and api integration with the frontend and backend
+SecureFile AI
 
-# UNKNOWN-FIRST(Novelty-Aware Malware Triage System)
+Simple and Explainable Malware Triage for Windows PE Files
 
-> **Don't force every file into MALWARE or BENIGN. Give the system a third answer: `NEEDS_ANALYSIS`.**
+This project is a malware triage system built for Code Cortex 3.0 at VIT Vellore.
 
-##  Problem
+The main goal is simple:
 
-Traditional malware classifiers usually give a simple answer:
+A normal malware classifier usually has to say either "malware" or "benign". Our system adds a third result, "NEEDS_ANALYSIS", when the prediction is unclear or when the file looks very different from the data used during training.
 
-- **MALWARE**
-- **BENIGN**
+This gives the analyst a clear signal that the result should be checked further instead of forcing a yes-or-no answer.
 
-This can be risky when a file is modified, unusual, or looks different from the examples the model has already learned.
+1. The Problem
 
-Modern threats can also be changed or assisted by AI tools, making simple yes/no detection less reliable for unfamiliar samples.
+Malware detection is not always a simple yes-or-no problem.
 
-##  Our Solution
+A machine learning model learns from the examples given to it during training. When a new file looks very different from those examples, the model may not have enough evidence to make a reliable automatic decision.
 
-**UNKNOWN-FIRST** is a malware triage system for Windows PE files.
+A normal binary classifier still has to choose:
 
-It uses:
+MALWARE
+or
+BENIGN
 
-1. **XGBoost** to predict how likely the sample is to be malware.
-2. **Isolation Forest** to check whether the sample looks unusual compared with known training data.
-3. A **triage layer** that combines both signals and decides:
+That can be a problem when the sample is unusual or the model is uncertain.
 
-| Verdict | Meaning |
-|---|---|
-| **MALWARE** | Strong malware prediction and the sample is not highly unusual |
-| **BENIGN** | Strong benign prediction and the sample is not highly unusual |
-|  **NEEDS_ANALYSIS** | The prediction is uncertain or the sample looks structurally unusual |
+Our system handles this situation with a third outcome:
 
-### Our key idea
+NEEDS_ANALYSIS
 
-Instead of asking only:
+This means:
 
-> **"Is this file malware?"**
+the model is not confident enough, or
 
-we also ask:
+the file looks structurally unusual, or
 
-> **"Does this file look different from what the model already knows?"**
+both signals need further review.
 
-That second question helps us avoid blindly trusting a confident-looking prediction on an unfamiliar sample.
+2. Our USP
 
----
+The main USP of this project is the combination of:
 
-#  What Makes It Different?
+Malware classification
 
-The main feature of our project is the **`NEEDS_ANALYSIS`** verdict.
+Novelty detection
 
-A sample can be sent for further review when:
+A separate triage decision
 
-- the malware probability is between the normal decision boundaries,
-- the file looks structurally unusual,
-- or both signals disagree.
+The system does not only ask:
 
-This makes the system **novelty-aware** instead of relying only on binary classification.
+Does this file look malicious?
 
-### Important clarification
+It also asks:
 
-The current dataset contains **extracted static PE features**, not labels for "AI-generated malware".
+Does this file look unusual compared with the data the model learned from?
 
-Therefore, our system does **not** claim to identify AI-generated malware directly.
+The first question is answered by XGBoost.
 
-Instead, the system can flag a sample as **unusual / novel / uncertain**, including modified samples that may not closely resemble the training data.
+The second question is answered by Isolation Forest.
 
----
+The two results are then combined by the triage engine.
 
-#  How It Works
+This gives the system three clear outcomes:
 
-```text
-              SAMPLE FEATURES
-                     │
-                     ▼
-             Input Validation
-                     │
-          ┌──────────┴──────────┐
-          ▼                     ▼
-   XGBoost Classifier      Isolation Forest
-          │                     │
-          │                     │
- Malware Probability      Novelty Score
-          └──────────┬──────────┘
-                     ▼
+MALWARE
+BENIGN
+NEEDS_ANALYSIS
+
+The important part is not simply adding another class.
+
+The important part is allowing the system to say:
+
+"I do not have enough trustworthy evidence for an automatic decision. Please check this sample further."
+
+This is the central idea of the project.
+
+3. What the System Does
+
+At a high level, the system works like this:
+
+Extracted PE Features
+        |
+        v
+Input Validation
+        |
+        +-----------------------+
+        |                       |
+        v                       v
+XGBoost Classifier       Isolation Forest
+        |                       |
+        v                       v
+Malware Probability      Novelty Score
+        |                       |
+        +-----------+-----------+
+                    |
+                    v
               Triage Engine
-                     │
-       ┌─────────────┼─────────────┐
-       ▼             ▼             ▼
-    MALWARE       BENIGN     NEEDS_ANALYSIS
-                     │
-                     ▼
-              Explanation
-          + Top Important Features
-```
+                    |
+          +---------+---------+
+          |         |         |
+          v         v         v
+       MALWARE   BENIGN   NEEDS_ANALYSIS
+                    |
+                    v
+             SHAP Explanation
+                    |
+                    v
+              Web Dashboard
 
----
+4. How the Machine Learning Works
 
-#  Machine Learning
+4.1 XGBoost
 
-## 1. XGBoost - Malware Detection
+XGBoost is the main malware classifier.
 
-The XGBoost model learns from the PE features and predicts:
+It looks at the static PE features and estimates how strongly the sample looks like malware.
 
-**`malware_probability`**
+The model returns a probability between 0 and 1.
+
+For example:
+
+0.95  -> strong malware evidence
+0.08  -> strong benign evidence
+0.50  -> unclear
+
+For inference, the malware probability is taken from:
+
+model.predict_proba(x)[0, 1]
+
+The class mapping used by the model is:
+
+0 -> benign
+1 -> malware
+
+The model can also return the class directly with:
+
+model.predict(x)
+
+4.2 Isolation Forest
+
+Isolation Forest is used for novelty detection.
+
+It answers a different question:
+
+Does this sample look unusual compared with the training data?
+
+A lower novelty score means the sample looks more familiar.
+
+A higher novelty score means the sample looks more unusual.
 
 Example:
 
-```text
-0.94 → high malware probability
-0.08 → low malware probability
-0.52 → uncertain
-```
+0.10 -> looks familiar
+0.50 -> somewhat unusual
+0.95 -> very unusual
 
-The model is trained using the dataset's `legitimate` target:
+Isolation Forest is not being presented as a zero-day detector.
 
-```text
-legitimate = 1  → BENIGN
-legitimate = 0  → MALWARE
-```
+It is a novelty detector.
 
-For our internal model logic, this is converted to:
+5. Final Triage Decision
 
-```text
-malware = 1
-benign  = 0
-```
+The final result is produced by combining:
 
----
+malware probability
 
-## 2. Isolation Forest - Novelty Detection
+novelty score
 
-The classifier answers:
+selected thresholds
 
-> "Does this look malicious?"
+confidence rules
 
-Isolation Forest answers:
+The simplified decision is:
 
-> "Does this look unusual compared with the training data?"
-
-A higher novelty score means the sample is more unusual.
-
-This gives the system a second layer of protection against unfamiliar structures.
-
----
-
-#  Triage Logic
-
-The system combines the two signals.
-
-The starting decision logic is:
-
-```text
 High malware probability
-        +
+and
 Low novelty
-        ↓
+        |
+        v
      MALWARE
-```
 
-```text
 Low malware probability
-        +
+and
 Low novelty
-        ↓
-     BENIGN
-```
+        |
+        v
+      BENIGN
 
-```text
-Uncertain probability
-        OR
+Uncertain prediction
+or
 High novelty
-        ↓
- NEEDS_ANALYSIS
-```
+        |
+        v
+  NEEDS_ANALYSIS
 
-The final thresholds are selected using the validation data and then frozen before final test evaluation.
+The thresholds are selected using validation data and then frozen before the final test evaluation.
 
----
+The final test set is not used to choose the thresholds.
 
-#  Explainable Results
+6. Why the Third Decision Matters
 
-The system does not only return a verdict.
+Suppose the model sees a file with a feature pattern that is very different from the samples it learned from.
 
-It also provides:
+A normal binary system may still return:
 
-- malware probability
-- novelty score
-- confidence level
-- top features influencing the prediction
-- model version
-- novelty-model version
+BENIGN
 
-Example response:
+or:
 
-```json
-{
-  "sample_id": "demo-001",
-  "verdict": "NEEDS_ANALYSIS",
-  "malware_probability": 0.71,
-  "novelty_score": 0.97,
-  "confidence": "LOW",
-  "top_shap_features": [
-    {
-      "feature": "SectionsMeanEntropy",
-      "raw_value": 6.4,
-      "shap_value": 0.31,
-      "direction": "towards_malware"
-    }
-  ],
-  "model_version": "xgb-v1",
-  "novelty_model_version": "iforest-v1"
-}
-```
+MALWARE
 
-This helps a reviewer understand **why** the model reached its decision.
+Our system can instead return:
 
----
+NEEDS_ANALYSIS
 
-#  System Architecture
+This does not mean the file is definitely malicious.
 
-```text
-React Frontend
-     │
-     │ HTTP / JSON
-     ▼
-Spring Boot Backend
-     │
-     │ HTTP / JSON
-     ▼
-FastAPI ML Service
-     │
-     ▼
-Triage Engine
- ┌───┴───────────────┐
- ▼                   ▼
-XGBoost          Isolation Forest
- ▼                   ▼
-Malware Prob.     Novelty Score
- └──────────┬────────┘
-            ▼
-     Triage Decision
-            │
-   ┌────────┼─────────┐
-   ▼        ▼         ▼
-MALWARE   BENIGN   NEEDS_ANALYSIS
-            │
-            ▼
-        MongoDB
-      Scan History
-```
+It means:
 
-### Service responsibilities
+The system does not have enough trustworthy evidence for an automatic decision, so further analysis is recommended.
 
-| Component | Responsibility |
-|---|---|
-| **React** | User interface and result display |
-| **Spring Boot** | Main backend/API and scan history |
-| **FastAPI** | ML inference service |
-| **XGBoost** | Malware classification |
-| **Isolation Forest** | Novelty detection |
-| **MongoDB** | Scan/result metadata |
-| **Docker** | Service packaging and deployment |
+This helps prevent the system from giving a false sense of certainty.
 
----
+7. Dataset
 
-# Tech Stack
+The system uses a Windows PE static-feature malware dataset with approximately:
 
-### Machine Learning
+138,000 samples
+about 54 usable static features
 
-- Python
-- XGBoost
-- Scikit-learn
-- SHAP
-- Pandas
-- NumPy
-- Joblib
+The target column is:
 
-### Backend
+legitimate
 
-- Java
-- Spring Boot
-- MongoDB
+Its meaning is:
 
-### ML API
+1 -> benign
+0 -> malware
 
-- FastAPI
-- Pydantic
+For model training, this is converted to:
 
-### Frontend
+is_malware = 1 - legitimate
 
-- React
+So the model uses:
 
-### DevOps / Security
+1 -> malware
+0 -> benign
 
-- Docker
-- Docker Compose
-- GitHub
-- CI/CD and security checks
+8. What Are PE Features?
 
----
+PE means Portable Executable.
 
-# Project Structure
+Windows executable files such as EXE and DLL files follow the PE format.
 
-```text
-UNKNOWN-FIRST/
-│
-├── ml/
-│   ├── notebooks/
-│   └── ml_package/
-│       ├── predictor.py
-│       ├── triage_rules.py
-│       ├── artifacts/
-│       │   ├── xgb_malware_model.joblib
-│       │   ├── iforest_novelty_model.joblib
-│       │   ├── preprocessor.joblib
-│       │   ├── novelty_score_transformer.joblib
-│       │   ├── thresholds.json
-│       │   ├── feature_schema.json
-│       │   ├── shap_feature_names.json
-│       │   └── model_metadata.json
-│       └── README.md
-│
-├── ai_system/
-│   ├── main.py
-│   ├── triage_engine.py
-│   ├── schemas.py
-│   └── adapters/
-│
-├── backend/
-│   ├── controller/
-│   ├── service/
-│   ├── repository/
-│   └── model/
-│
-├── frontend/
-│   └── src/
-│
-├── infra/
-│   ├── docker-compose.yml
-│   └── dockerfiles/
-│
-├── security/
-│
-├── notebooks/
-│
-├── README.md
-├── CLAUDE.md
-├── ARCHITECTURE.md
-├── PROJECT_STATE.md
-├── INTERFACES.md
-└── TASK_BOARD.md
-```
+Instead of running a file, the dataset provides information about its internal structure.
 
----
+The features include things such as:
 
-# Dataset
+PE header information
 
-The project uses a Windows PE static-feature malware dataset containing approximately **138,000 samples** and around **54 usable static features**.
+section information
 
-The features describe properties such as:
+section sizes
 
-- PE header information
-- section statistics
-- section entropy
-- imports / exports
-- resources
-- debug metadata
+section entropy
 
-### Important dataset limitation
+imports
 
-The dataset does **not** contain:
+exports
 
-- raw executable binaries
-- runtime behavior
-- network telemetry
-- API execution traces
-- malware family labels
-- AI-generated-malware labels
-- supply-chain provenance
+resources
 
-Therefore, the current system is a **static-feature malware triage system**, not a complete dynamic malware analysis platform.
+debug information
 
----
+other PE metadata
 
-#  ML Training Pipeline
+In simple words:
 
-The training process follows this flow:
+We look at how the Windows file is built rather than running the file.
 
-```text
-Raw Dataset
-    ↓
-Data Inspection
-    ↓
-Cleaning
-    ↓
-Feature Preprocessing
-    ↓
-Train / Validation / Test Split
-    ↓
-XGBoost Training
-    ↓
-Isolation Forest Training
-    ↓
-Threshold Selection
-    ↓
-Final Test Evaluation
-    ↓
-SHAP Explanation
-    ↓
-Export Model Artifacts
-```
+9. Dataset Limitations
 
-The data is split into:
+The current dataset contains extracted static features.
 
-```text
-64% → Training
-16% → Validation
-20% → Final Test
-```
+It does not contain:
+
+raw executable binaries
+
+runtime behaviour
+
+API-call traces
+
+network traffic
+
+command-line behaviour
+
+malware family labels
+
+AI-generated-malware labels
+
+supply-chain labels
+
+Because of this, the current system does not claim to directly detect:
+
+zero-day malware
+
+AI-generated malware
+
+fileless malware
+
+all polymorphic malware
+
+supply-chain malware
+
+The defensible claim is:
+
+We add a novelty-aware third decision to static PE malware classification so unusual or uncertain samples can be sent for further analysis.
+
+10. Data Preprocessing
+
+The preprocessing is kept simple and reproducible.
+
+Step 1: Remove identifier columns
+
+If present, columns such as:
+
+Name
+md5
+
+are removed.
+
+These identify individual samples and are not useful as general malware structure.
+
+Step 2: Keep the usable numeric features
+
+The model works with the numeric PE features available in the dataset.
+
+Step 3: Handle infinite values
+
+Positive and negative infinity values are converted to missing values.
+
+Step 4: Handle missing values
+
+Missing numeric values are filled using the median calculated from the training data.
+
+The same training medians are then used for:
+
+validation
+
+test
+
+inference
+
+This keeps training and inference consistent.
+
+11. Scaling
+
+No standard scaler is used.
+
+The pipeline does not use:
+
+StandardScaler
+MinMaxScaler
+RobustScaler
+
+The reason is simple:
+
+XGBoost and Isolation Forest are tree-based methods and do not require feature scaling for this pipeline.
+
+12. Train, Validation and Test Split
+
+The data is separated into:
+
+64% -> training
+16% -> validation
+20% -> final test
 
 The split is stratified and uses a fixed random seed.
 
-The final test set is kept separate from threshold selection.
+The roles are:
 
----
+Training
+    |
+    -> learn the models
 
-#  Running the ML Notebook
+Validation
+    |
+    -> choose thresholds and tune decisions
 
-The complete ML pipeline is available as a Google Colab notebook.
+Test
+    |
+    -> final evaluation
 
-Open:
+The final test data is kept separate from threshold selection.
 
-```text
-UNKNOWN_FIRST_Malware_Triage_Rajbir_Colab.ipynb
-```
+13. Explainability
 
-Then run the cells in order:
+The system does not stop at a final verdict.
 
-```text
-Setup
-  ↓
-Load Dataset
-  ↓
-Clean Data
-  ↓
-Preprocess
-  ↓
-Train Models
-  ↓
-Tune Thresholds
-  ↓
-Evaluate
-  ↓
-Novelty Stress Test
-  ↓
-SHAP
-  ↓
-Export Artifacts
-  ↓
-Prediction Function
-```
+It also explains the classifier result.
 
-The notebook creates the model artifacts required by the inference service.
+We use SHAP to identify the most important features for a prediction.
 
----
+The system can return:
 
-#  ML API
+feature name
 
-The main inference endpoint is:
+raw value
 
-```http
-POST /v1/triage
-```
+SHAP value
 
-Example request:
+direction of influence
 
-```json
+Example:
+
 {
-  "sample_id": "demo-001",
-  "features": {
-    "Machine": 332,
-    "SectionsMeanEntropy": 6.4,
-    "SectionsMinEntropy": 1.2,
-    "SectionsMaxEntropy": 7.9,
-    "ImportsNb": 87
-  }
+  "feature": "SectionsMeanEntropy",
+  "raw_value": 6.4,
+  "shap_value": 0.31,
+  "direction": "towards_malware"
 }
-```
 
-> A real request must contain all features required by `feature_schema.json`.
+The web interface shows only the most useful features so that the result remains easy to understand.
 
-Example response:
+14. End-to-End Architecture
 
-```json
-{
-  "sample_id": "demo-001",
-  "verdict": "NEEDS_ANALYSIS",
-  "malware_probability": 0.71,
-  "novelty_score": 0.97,
-  "confidence": "LOW",
-  "top_shap_features": [],
-  "model_version": "xgb-v1",
-  "novelty_model_version": "iforest-v1"
-}
-```
+The complete architecture is:
 
----
+                         USER
+                           |
+                           v
+                  +----------------+
+                  | React Frontend |
+                  |    Port 5173   |
+                  +-------+--------+
+                          |
+                       HTTP/JSON
+                          |
+                          v
+                  +----------------+
+                  | Spring Boot    |
+                  | Backend :8080  |
+                  +---+--------+---+
+                      |        |
+                   HTTP      MongoDB
+                      |        |
+                      v        v
+               +----------+ +---------+
+               | FastAPI  | | MongoDB |
+               | :8000    | | History |
+               +----+-----+ +---------+
+                    |
+                    v
+              +-------------+
+              | Triage      |
+              | Engine      |
+              +------+------+
+                     |
+          +----------+----------+
+          |                     |
+          v                     v
+     +---------+         +---------------+
+     | XGBoost |         | Isolation     |
+     |         |         | Forest        |
+     +----+----+         +-------+-------+
+          |                      |
+          v                      v
+   Malware Probability      Novelty Score
+          |                      |
+          +----------+-----------+
+                     |
+                     v
+              Final Verdict
+                     |
+         +-----------+-----------+
+         |           |           |
+         v           v           v
+      MALWARE     BENIGN   NEEDS_ANALYSIS
+                     |
+                     v
+               SHAP Evidence
+                     |
+                     v
+                React UI
 
-# Backend API
+15. Why This Architecture?
 
-The Spring Boot backend provides:
+Each part has one clear responsibility.
 
-```text
+Component
+
+Main responsibility
+
+React
+
+User interface
+
+Spring Boot
+
+Main backend and API gateway
+
+FastAPI
+
+ML inference service
+
+XGBoost
+
+Malware probability
+
+Isolation Forest
+
+Novelty score
+
+Triage Engine
+
+Final three-way decision
+
+MongoDB
+
+Scan history
+
+Docker
+
+Packaging and deployment
+
+This separation makes the project easier to develop, test and maintain.
+
+It also means the frontend does not need to know how the ML models work internally.
+
+16. API Flow
+
+The browser talks only to Spring Boot.
+
+React
+  |
+  | POST /api/v1/triage
+  v
+Spring Boot
+  |
+  | POST /v1/triage
+  v
+FastAPI
+  |
+  v
+ML Models
+  |
+  v
+Triage Result
+  |
+  v
+Spring Boot
+  |
+  +--> MongoDB
+  |
+  +--> React
+
+The React frontend never calls FastAPI directly.
+
+This keeps the architecture clean and gives Spring Boot one central place to handle:
+
+validation
+
+errors
+
+history
+
+API control
+
+frontend responses
+
+17. API Endpoints
+
+Spring Boot
+
 POST /api/v1/triage
 GET  /api/v1/history
 GET  /api/v1/history/{scanId}
 GET  /api/v1/health
 GET  /api/v1/model-info
-```
 
-The frontend communicates with **Spring Boot only**.
-
-The browser does not directly call the FastAPI ML service or MongoDB.
-
----
-
-# Security Design
-
-The project keeps the main services separated:
-
-```text
-Browser
-   │
-   ▼
-Spring Boot
-   │
-   ▼
 FastAPI
-   │
-   ▼
-ML Models
-```
 
-MongoDB and FastAPI are kept inside the private service network.
+POST /v1/triage
 
-The deployment uses Docker-based isolation and environment-based configuration.
+A typical request contains a sample ID and its extracted PE features.
 
-The goal is to keep the system simple, secure, and practical for a hackathon deployment.
+A typical result contains:
 
----
+sample ID
+verdict
+malware probability
+novelty score
+confidence
+top SHAP features
+model version
+novelty model version
+timestamp
 
-#  Example Use Case
+18. Model Artifacts
 
-Imagine a file that looks very different from the samples used to train the model.
+After training, the ML pipeline exports the files needed for inference.
 
-A normal binary classifier may still be forced to say:
+Typical artifacts are:
 
-```text
-BENIGN
-```
+artifacts/
+├── xgb_malware_model.joblib
+├── iforest_novelty_model.joblib
+├── preprocessor.joblib
+├── novelty_score_transformer.joblib
+├── thresholds.json
+├── feature_schema.json
+├── shap_feature_names.json
+└── model_metadata.json
 
-or
+These artifacts make sure that inference uses the same:
 
-```text
+feature order
+
+preprocessing
+
+novelty mapping
+
+thresholds
+
+model versions
+
+as the training pipeline.
+
+19. Prediction Interface
+
+The classifier exposes the standard scikit-learn style methods:
+
+prediction = model.predict(x)
+
+malware_probability = model.predict_proba(x)[0, 1]
+
+The meaning is:
+
+model.predict(x)
+    |
+    +-> 0 = benign
+    +-> 1 = malware
+
+and:
+
+model.predict_proba(x)[0, 1]
+    |
+    +-> malware probability
+
+The inference service then combines the probability with the novelty score before producing the final verdict.
+
+20. Web Application
+
+The website is intentionally simple.
+
+The main user journey is:
+
+Home
+  |
+  v
+Analyze a Sample
+  |
+  v
+Choose a demo sample
+  |
+  v
+Check Sample
+  |
+  v
+View Result
+  |
+  +--> Malware Score
+  +--> Novelty Score
+  +--> Confidence
+  +--> Top Evidence
+
+The three main results are presented with simple language:
+
 MALWARE
-```
 
-Our system can instead respond:
+"The file looks harmful."
 
-```text
+BENIGN
+
+"The file looks safe based on the learned data."
+
 NEEDS_ANALYSIS
-```
 
-with:
+"The file looks unusual or the result is not clear. More checking is recommended."
 
-```text
-Malware Probability → 0.71
-Novelty Score       → 0.97
-Confidence          → LOW
-```
+21. Demo Scenarios
 
-This tells the analyst:
+The live demo should show three simple cases.
 
-> **"The system is not confident enough to automatically trust this sample. Please review it further."**
+Case 1: Benign
 
-That is the core idea of **UNKNOWN-FIRST**.
-
----
-
-#  Demo Scenarios
-
-For demonstration, the system can show three cases:
-
-### 1. Known Malware
-
-```text
-High malware probability
-Low novelty
-→ MALWARE
-```
-
-### 2. Known Benign
-
-```text
 Low malware probability
 Low novelty
-→ BENIGN
-```
+        |
+        v
+BENIGN
 
-### 3. Unusual / Uncertain Sample
+Case 2: Malware
 
-```text
+High malware probability
+Low novelty
+        |
+        v
+MALWARE
+
+Case 3: Needs Analysis
+
 Uncertain prediction
-or high novelty
-→ NEEDS_ANALYSIS
-```
+or
+High novelty
+        |
+        v
+NEEDS_ANALYSIS
 
-This makes the project's main idea easy to understand during a live demo.
+The third case is the main part of the demo because it shows the difference between a simple binary classifier and our triage approach.
 
----
+22. Security and Deployment
 
-# Future Improvements
+The project is designed as separate services.
 
-The current project focuses on static PE features.
+Frontend
+Backend
+FastAPI
+MongoDB
 
-Possible future improvements include:
+The services communicate over controlled internal connections.
 
-- dynamic behavioral analysis
-- API-call sequence analysis
-- network behavior analysis
-- malware family classification
-- richer analyst feedback
-- continuous model updating
-- better uncertainty calibration
-- real executable feature extraction pipeline
-- additional external validation datasets
+MongoDB is not exposed directly to the browser.
 
-These are future extensions and are not required for the current MVP.
+FastAPI is not called directly by the browser.
 
----
+Model files are mounted read-only inside the ML service.
 
-#  Important Scope
+Configuration is handled through environment variables.
 
-**UNKNOWN-FIRST is a malware triage system, not a replacement for a complete security analysis workflow.**
+Docker is used to keep deployment consistent.
 
-It works on the features available in the current dataset.
+23. Project Structure
 
-The `NEEDS_ANALYSIS` verdict means:
+project/
+|
++-- ml/
+|   +-- notebooks/
+|   +-- ml_package/
+|       +-- predictor.py
+|       +-- triage_rules.py
+|       +-- artifacts/
+|
++-- ai_system/
+|   +-- main.py
+|   +-- triage_engine.py
+|   +-- adapters/
+|
++-- backend/
+|   +-- controller/
+|   +-- service/
+|   +-- repository/
+|   +-- model/
+|
++-- frontend/
+|   +-- src/
+|
++-- infra/
+|   +-- docker-compose.yml
+|
++-- security/
+|
++-- ARCHITECTURE.md
++-- INTERFACES.md
++-- PROJECT_STATE.md
++-- TASK_BOARD.md
++-- README.md
 
-> **"Do not automatically trust this result. Perform further analysis."**
+24. Team Responsibilities
 
-It does not mean that the file is definitely malicious.
+Rajbir — Machine Learning
 
----
+Responsible for:
 
-#  Team
+data cleaning
 
-**Team:** Garnet_Chronicles
+preprocessing
 
-### Roles
+feature work
 
-- **Rajbir Singh** — ML / Data Science
-- **Kaustubh Nikam** — AI System / ML Integration
-- **Rahul** — Full Stack Development
-- **Mayank** — DevOps / Cybersecurity
+XGBoost
 
----
+Isolation Forest
 
-#  Project Summary
+threshold selection
 
-**UNKNOWN-FIRST** adds a missing decision to malware classification:
+SHAP
 
-```text
+evaluation
+
+model artifacts
+
+Kaustubh — AI Systems
+
+Responsible for:
+
+FastAPI
+
+model integration
+
+triage engine
+
+confidence logic
+
+inference orchestration
+
+Rahul — Full Stack
+
+Responsible for:
+
+React
+
+Spring Boot
+
+API integration
+
+dashboard
+
+history
+
+user experience
+
+Mayank — DevOps and Security
+
+Responsible for:
+
+Docker
+
+deployment
+
+environment configuration
+
+service security
+
+CI/CD
+
+reliability
+
+25. What Makes the Project Practical?
+
+The project is intentionally built around a small number of understandable components.
+
+We are not trying to build every possible malware security feature.
+
+The current system focuses on one clear problem:
+
+How can a malware classifier avoid making an automatic yes-or-no decision when the sample looks unfamiliar or the model is not confident?
+
+That keeps the project practical for a hackathon while still giving it a clear technical idea.
+
+26. Limitations
+
+The current version only works with extracted static PE features.
+
+It does not execute files.
+
+It does not inspect runtime behaviour.
+
+It does not inspect network traffic.
+
+It does not have a direct label for AI-generated malware.
+
+It does not prove that a sample is a zero-day.
+
+It does not replace a complete security analysis workflow.
+
+The NEEDS_ANALYSIS result simply means:
+
+Further analysis is recommended.
+
+27. Future Improvements
+
+Possible future work includes:
+
+real executable feature extraction
+
+dynamic behaviour analysis
+
+API-call sequence analysis
+
+network behaviour analysis
+
+malware family classification
+
+analyst feedback
+
+model updating
+
+more external validation datasets
+
+better uncertainty calibration
+
+These are future extensions and are not required for the current prototype.
+
+28. Why the Project Is Easy to Explain
+
+The entire project can be explained in three questions:
+
+Question 1
+
+Does the file look harmful?
+
+XGBoost answers this.
+
+Question 2
+
+Does the file look unusual?
+
+Isolation Forest answers this.
+
+Question 3
+
+What should we do with both results?
+
+The triage engine decides:
+
 MALWARE
 BENIGN
 NEEDS_ANALYSIS
-```
 
-Instead of trusting only the classifier's prediction, the system also checks whether the sample is **novel or structurally unusual**.
+That is the whole idea.
 
-This makes the workflow:
+29. One-Minute Project Explanation
 
-```text
-DETECT
-  ↓
-CHECK NOVELTY
-  ↓
-DECIDE
-  ↓
-EXPLAIN
-  ↓
-ESCALATE WHEN NEEDED
-```
+We built a malware triage system for Windows PE files.
 
-### One-line pitch
+First, XGBoost checks how strongly the file looks like malware.
 
-> **UNKNOWN-FIRST is a novelty-aware malware triage system that detects known threats while flagging unusual or uncertain samples for further analysis instead of forcing every file into a risky yes/no decision.**
+Then, Isolation Forest checks how unusual the file looks compared with the training data.
 
+We combine both results.
+
+If the malware evidence is strong and the file is not unusual, we return MALWARE.
+
+If the benign evidence is strong and the file is not unusual, we return BENIGN.
+
+If the prediction is unclear or the file looks very unusual, we return NEEDS_ANALYSIS.
+
+We also use SHAP to explain which features influenced the classifier.
+
+The system is connected through React, Spring Boot, FastAPI and MongoDB.
+
+30. Final Summary
+
+The project can be reduced to this simple workflow:
+
+LOOK AT THE FILE STRUCTURE
+          |
+          v
+ASK: DOES IT LOOK HARMFUL?
+          |
+          v
+ASK: DOES IT LOOK UNUSUAL?
+          |
+          v
+MAKE A DECISION
+          |
+   +------+-------+--------+
+   |              |        |
+   v              v        v
+MALWARE        BENIGN   NEEDS_ANALYSIS
+                          |
+                          v
+                    REVIEW FURTHER
+
+The main idea is simple:
+
+Detect what looks harmful, check what looks unusual, and ask for further analysis when the evidence is not strong enough.
+
+Team
+
+Garnet_Chronicles
+
+Code Cortex 3.0
+VIT Vellore
+
+Team members:
+
+Rajbir Singh — Machine Learning
+
+Kaustubh Nikam — AI Systems
+
+Rahul — Full Stack
+
+Mayank — DevOps and Security
