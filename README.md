@@ -2,13 +2,140 @@ SecureFile AI
 
 Simple and Explainable Malware Triage for Windows PE Files
 
-This project is a malware triage system built for Code Cortex 3.0 at VIT Vellore.
+A practical malware triage system that combines malware prediction and novelty detection and adds a third decision: NEEDS_ANALYSIS.
 
-The main goal is simple:
+Area
 
-A normal malware classifier usually has to say either "malware" or "benign". Our system adds a third result, "NEEDS_ANALYSIS", when the prediction is unclear or when the file looks very different from the data used during training.
+Technology
 
-This gives the analyst a clear signal that the result should be checked further instead of forcing a yes-or-no answer.
+Machine Learning
+
+Python, XGBoost, Scikit-learn, SHAP
+
+ML Service
+
+FastAPI
+
+Backend
+
+Spring Boot
+
+Frontend
+
+React + Vite
+
+Database
+
+MongoDB
+
+Deployment
+
+Docker / Docker Compose
+
+Dataset
+
+Windows PE static features
+
+At a Glance
+
+What problem are we solving?
+
+A normal malware classifier is usually forced to say:
+
+MALWARE or BENIGN
+
+Our system adds:
+
+NEEDS_ANALYSIS
+
+when the sample looks unusual or the model is not confident enough.
+
+Core idea
+
+Does it look harmful?
+          +
+Does it look unusual?
+          |
+          v
+     Final Decision
+
+Three outcomes
+
+Verdict
+
+Meaning
+
+MALWARE
+
+The file looks harmful
+
+BENIGN
+
+The file looks safe based on the learned data
+
+NEEDS_ANALYSIS
+
+The file looks unusual or the result is not clear
+
+Table of Contents
+
+The Problem
+
+Our USP
+
+What the System Does
+
+Machine Learning
+
+Final Triage Decision
+
+Why the Third Decision Matters
+
+Dataset
+
+PE Features
+
+Dataset Limitations
+
+Data Preprocessing
+
+Scaling
+
+Train, Validation and Test Split
+
+Explainability
+
+System Architecture
+
+API Flow
+
+API Endpoints
+
+Model Artifacts
+
+Prediction Interface
+
+Web Application
+
+Demo Scenarios
+
+Security and Deployment
+
+Project Structure
+
+Team Responsibilities
+
+What Makes the Project Practical
+
+Limitations
+
+Future Improvements
+
+Why the Project Is Easy to Explain
+
+One-Minute Project Explanation
+
+Final Summary
 
 1. The Problem
 
